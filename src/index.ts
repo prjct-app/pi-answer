@@ -1,5 +1,5 @@
-import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
-import { Container, Text } from '@earendil-works/pi-tui';
+import { getMarkdownTheme, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
+import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui';
 import { SYMBOL, replyHeadline, replyLines, replyProblems, replySchema, row, type Reply } from '@prjct.app/pi-tui-kit';
 
 export const ANSWER_TOOL = 'answer';
@@ -30,6 +30,20 @@ const toneOf = (reply: Reply): 'success' | 'warning' | 'accent' => {
   if (reply.kind === 'change' && reply.checks.some(check => !check.passed)) return 'warning';
   return 'success';
 };
+
+/** The free-text field of each kind; a change has none, its headline is a count. */
+const proseOf = (reply: Reply): string | undefined => {
+  switch (reply.kind) {
+    case 'change': return undefined;
+    case 'answer': return reply.answer;
+    case 'diagnosis': return reply.cause;
+    case 'needs_input': return reply.question;
+    case 'blocked': return reply.reason;
+  }
+};
+
+/** Prose the model wrote is Markdown and renders like any assistant text. */
+const markdown = (text: string) => new Markdown(text.trim(), 2, 0, getMarkdownTheme());
 
 export function installAnswer(pi: ExtensionAPI): void {
   /**
@@ -72,11 +86,17 @@ export function installAnswer(pi: ExtensionAPI): void {
           meta: first?.type === 'text' ? first.text.replace(/\s+/gu, ' ').slice(0, 160) : undefined });
       }
       const reply = result.details as Reply;
+      const prose = proseOf(reply);
       const container = new Container();
-      container.addChild(row(theme, { symbol: SYMBOL.ok, tone: toneOf(reply), verb: VERBS[reply.kind], target: replyHeadline(reply) }));
-      // The headline already carries the first line.
-      const rest = replyLines(reply).flatMap(line => line.split('\n')).slice(1);
+      container.addChild(row(theme, { symbol: SYMBOL.ok, tone: toneOf(reply), verb: VERBS[reply.kind], target: prose === undefined ? replyHeadline(reply) : '' }));
+      if (prose !== undefined) container.addChild(markdown(prose));
+      // The first line is the headline or the prose above; the rest are the kind's lists.
+      const rest = replyLines({ ...reply, explanation: undefined }).slice(1).flatMap(line => line.split('\n'));
       if (rest.length) container.addChild(new Text(rest.map(line => theme.fg(line.startsWith('  ✗') ? 'error' : 'text', line)).join('\n'), 2, 0));
+      if (reply.explanation) {
+        container.addChild(new Spacer(1));
+        container.addChild(markdown(reply.explanation));
+      }
       return container;
     },
   } as Parameters<ExtensionAPI['registerTool']>[0]);
