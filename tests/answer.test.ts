@@ -34,7 +34,9 @@ test('a valid reply is delivered and ends the turn', async () => {
   await prompt('agrega retry');
   const result = await tool.execute('1', change);
   assert.equal(result.terminate, true);
-  assert.deepEqual(result.details, change);
+  const { deliveredAt, ...reply } = result.details;
+  assert.deepEqual(reply, change);
+  assert.equal(typeof deliveredAt, 'number');
 });
 
 test('a malformed reply goes back to the model; its content is never censored', async () => {

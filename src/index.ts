@@ -43,7 +43,10 @@ const proseOf = (reply: Reply): string | undefined => {
 };
 
 /** Prose the model wrote is Markdown and renders like any assistant text. */
-const markdown = (text: string) => new Markdown(text.trim(), 2, 0, getMarkdownTheme());
+const markdown = (text: string) => new Markdown(text.trim(), 1, 0, getMarkdownTheme());
+
+/** What a delivered reply keeps: the reply itself and when it reached the person. */
+type Delivered = Reply & { deliveredAt?: number };
 
 export function installAnswer(pi: ExtensionAPI): void {
   /**
@@ -63,6 +66,8 @@ export function installAnswer(pi: ExtensionAPI): void {
     promptSnippet: 'Reply to the person with typed data and end the turn',
     parameters: replySchema(),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
+    // The reply reads like a message, not a tool box: no shell, no pad lines.
+    renderShell: 'self',
     async execute(_id: string, input: unknown) {
       // Validated here so the model fixes its own reply while it still has the
       // context; a thrown error goes back to it as the tool result.
@@ -72,7 +77,7 @@ export function installAnswer(pi: ExtensionAPI): void {
       }
       return {
         content: [{ type: 'text' as const, text: 'Delivered.' }],
-        details: input as Reply,
+        details: { ...(input as Reply), deliveredAt: Date.now() } satisfies Delivered,
         terminate: true,
       };
     },
@@ -85,14 +90,14 @@ export function installAnswer(pi: ExtensionAPI): void {
         return row(theme, { symbol: SYMBOL.error, tone: 'error', verb: VERB, target: 'reply rejected',
           meta: first?.type === 'text' ? first.text.replace(/\s+/gu, ' ').slice(0, 160) : undefined });
       }
-      const reply = result.details as Reply;
+      const reply = result.details as Delivered;
       const prose = proseOf(reply);
       const container = new Container();
-      container.addChild(row(theme, { symbol: SYMBOL.ok, tone: toneOf(reply), verb: VERBS[reply.kind], target: prose === undefined ? replyHeadline(reply) : '' }));
+      container.addChild(row(theme, { symbol: SYMBOL.ok, tone: toneOf(reply), verb: VERBS[reply.kind], target: prose === undefined ? replyHeadline(reply) : '', at: reply.deliveredAt }));
       if (prose !== undefined) container.addChild(markdown(prose));
       // The first line is the headline or the prose above; the rest are the kind's lists.
       const rest = replyLines({ ...reply, explanation: undefined }).slice(1).flatMap(line => line.split('\n'));
-      if (rest.length) container.addChild(new Text(rest.map(line => theme.fg(line.startsWith('  ✗') ? 'error' : 'text', line)).join('\n'), 2, 0));
+      if (rest.length) container.addChild(new Text(rest.map(line => theme.fg(line.startsWith('  ✗') ? 'error' : 'text', line)).join('\n'), 1, 0));
       if (reply.explanation) {
         container.addChild(new Spacer(1));
         container.addChild(markdown(reply.explanation));
