@@ -1,24 +1,32 @@
 import { getMarkdownTheme, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui';
-import { SYMBOL, replyHeadline, replyLines, replyProblems, replySchema, row, type Reply } from '@prjct.app/pi-tui-kit';
+import { SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, salvageReply, type Reply } from '@prjct.app/pi-tui-kit';
 
 export const ANSWER_TOOL = 'answer';
 export const NUDGE_TYPE = 'pi-answer-nudge';
 
 /**
- * Appended once and never varied, so the cached system prefix stays the same
- * across turns. It orders the reply; the tool checks only its shape.
+ * The tool's prompt guidelines: Pi renders them into the system prompt on every
+ * request while the tool is active. Appending them from before_agent_start
+ * flipped the system prompt on automated turns (follow-ups, job reports, team
+ * messages), which skip that hook, and each flip threw away the whole cached
+ * prefix: 46 of 59 system-prompt cache breaks measured on 2026-09-27/28.
  */
 export const SYSTEM_POLICY = [
-  '## How you reply',
   `End every turn by calling \`${ANSWER_TOOL}\` exactly once, alone in its tool batch. It is the only reply the person reads.`,
   'Pick the kind that matches what you did: change (you edited files), answer (you were asked something), diagnosis (you investigated a problem), needs_input (you need a decision), blocked (you cannot continue).',
   'Code goes into files with write/edit; in the reply, refer to it by path and line.',
   'Put the result in the fields. Use `explanation` for the why when the person asked for it; do not narrate your process or restate the request.',
   'Write no prose outside the tool.',
-].join('\n');
+];
 
 const NUDGE = `Your turn ended without \`${ANSWER_TOOL}\`. Call \`${ANSWER_TOOL}\` now with the result of this turn: no other tool, no prose.`;
+
+/**
+ * Replies rejected per prompt before the next one is salvaged as a plain
+ * answer: a model that cannot meet the schema still ends its turn.
+ */
+const MAX_REJECTIONS = 2;
 
 const VERB = 'DONE';
 const VERBS = { change: 'CHANGE', answer: 'ANSWER', diagnosis: 'DIAGNOSE', needs_input: 'ASK', blocked: 'BLOCKED' } as const;
@@ -50,10 +58,10 @@ type Delivered = Reply & { deliveredAt?: number };
 
 export function installAnswer(pi: ExtensionAPI): void {
   /**
-   * Per prompt: whether the run was already reminded once. A second reminder
-   * would only loop.
+   * Per prompt: whether the run was already reminded once (a second reminder
+   * would only loop) and how many replies were rejected so far.
    */
-  const slot = { nudged: false };
+  const slot = { nudged: false, rejections: 0 };
 
   pi.registerTool({
     name: ANSWER_TOOL,
@@ -64,8 +72,23 @@ export function installAnswer(pi: ExtensionAPI): void {
       + 'needs_input (one question and its options), blocked (why, and what you tried). '
       + 'Code belongs in files; refer to it by path. explanation holds the why when the person asked for it.',
     promptSnippet: 'Reply to the person with typed data and end the turn',
+    promptGuidelines: SYSTEM_POLICY,
     parameters: replySchema(),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
+    /**
+     * Runs before Pi validates against the union schema. Providers without
+     * strict sampling send near-miss shapes (`"refs": ""`, JSON in a string, a
+     * wrapped reply): repair fixes the shape, and what is still wrong is named
+     * per kind instead of as the union's error for every member.
+     */
+    prepareArguments(raw: unknown) {
+      const reply = repairReply(raw);
+      const problems = replyProblems(reply);
+      if (!problems.length) return reply;
+      slot.rejections += 1;
+      if (slot.rejections > MAX_REJECTIONS) return salvageReply(raw);
+      throw new Error(`Not delivered. Fix and call ${ANSWER_TOOL} again: ${problems.join('; ')}`);
+    },
     // The reply reads like a message, not a tool box: no shell, no pad lines.
     renderShell: 'self',
     async execute(_id: string, input: unknown) {
@@ -75,6 +98,7 @@ export function installAnswer(pi: ExtensionAPI): void {
       if (problems.length) {
         throw new Error(`Not delivered. Fix and call ${ANSWER_TOOL} again: ${problems.join('; ')}`);
       }
+      slot.rejections = 0;
       return {
         content: [{ type: 'text' as const, text: 'Delivered.' }],
         details: { ...(input as Reply), deliveredAt: Date.now() } satisfies Delivered,
@@ -108,9 +132,8 @@ export function installAnswer(pi: ExtensionAPI): void {
 
   pi.on('before_agent_start', async event => {
     // A reminder turn carries no prompt of its own; the person's request still rules.
-    if (event.prompt.trim()) slot.nudged = false;
-    if (event.systemPrompt.includes(SYSTEM_POLICY) || !pi.getActiveTools().includes(ANSWER_TOOL)) return undefined;
-    return { systemPrompt: `${event.systemPrompt}\n\n${SYSTEM_POLICY}` };
+    if (event.prompt.trim()) Object.assign(slot, { nudged: false, rejections: 0 });
+    return undefined;
   });
 
   /**
