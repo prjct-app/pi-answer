@@ -50,12 +50,12 @@ test('a malformed reply goes back to the model; its content is never censored', 
   assert.equal(withCode.terminate, true);
 });
 
-test('the policy is appended once and never varies with the prompt', async () => {
-  const { prompt } = harness();
-  const first = await prompt('agrega retry');
-  const second = await prompt('explícame el retry');
-  assert.equal(first.systemPrompt, `BASE\n\n${SYSTEM_POLICY}`);
-  assert.deepEqual(first, second);
+test('the policy rides on the tool, never on a per-turn system prompt', async () => {
+  const { tool, prompt } = harness();
+  assert.equal(await prompt('agrega retry'), undefined);
+  assert.equal(await prompt(''), undefined);
+  assert.deepEqual(tool.promptGuidelines, SYSTEM_POLICY);
+  assert.ok(SYSTEM_POLICY.some(line => line.includes(ANSWER_TOOL)));
 });
 
 test('a run that ends in prose is reminded exactly once', async () => {
@@ -81,4 +81,33 @@ test('no reminder after a delivered answer, an abort, or where the tool is not a
   assert.equal(await expert.prompt('tarea'), undefined);
   await expert.end([{ role: 'assistant', stopReason: 'stop' }]);
   assert.equal(expert.sent.length, 0);
+});
+
+test('near-miss replies from any model are repaired before validation', async () => {
+  const { tool, prompt } = harness();
+  await prompt('qué comando muestra el branch');
+  const answer = '`git branch` marca el branch actual con `*`.';
+  assert.deepEqual(tool.prepareArguments({ kind: 'answer', answer, refs: '' }), { kind: 'answer', answer, refs: [] });
+  assert.deepEqual(tool.prepareArguments({ kind: 'answer', answer: { answer, refs: [''] } }), { kind: 'answer', answer, refs: [] });
+  const result = await tool.execute('1', tool.prepareArguments(JSON.stringify({ kind: 'answer', answer, refs: [{ path: '' }] })));
+  assert.equal(result.terminate, true);
+});
+
+test('what repair cannot fix is named per kind, then salvaged so the turn always ends', async () => {
+  const { tool, prompt } = harness();
+  await prompt('agrega retry');
+  // With prose, a change with bare paths is delivered at once as an answer.
+  const described = tool.prepareArguments({ kind: 'change', files: ['src/retry.ts'], checks: [], pending: [], explanation: 'Agregué retry con backoff.' });
+  assert.deepEqual(described, { kind: 'answer', answer: 'Agregué retry con backoff.', refs: [{ path: 'src/retry.ts' }] });
+  // Without any, it is sent back, then salvaged.
+  const broken = { kind: 'change', files: ['src/retry.ts'], checks: [], pending: [] };
+  assert.throws(() => tool.prepareArguments(broken), /Not delivered.*\/files\/0/);
+  assert.throws(() => tool.prepareArguments(broken), /Not delivered/);
+  const salvaged = tool.prepareArguments(broken);
+  assert.equal(salvaged.kind, 'answer');
+  assert.match(salvaged.answer, /src\/retry\.ts/);
+  assert.equal((await tool.execute('1', salvaged)).terminate, true);
+  // A new prompt starts with a clean count.
+  await prompt('otra cosa');
+  assert.throws(() => tool.prepareArguments(broken), /Not delivered/);
 });
