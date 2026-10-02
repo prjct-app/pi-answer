@@ -1,6 +1,6 @@
 import { getMarkdownTheme, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui';
-import { SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, salvageReply, type Reply } from '@prjct.app/pi-tui-kit';
+import { SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, salvageReply, type Reply, repairToolArgs } from '@prjct.app/pi-tui-kit';
 
 export const ANSWER_TOOL = 'answer';
 export const NUDGE_TYPE = 'pi-answer-nudge';
@@ -57,6 +57,7 @@ const markdown = (text: string) => new Markdown(text.trim(), 1, 0, getMarkdownTh
 type Delivered = Reply & { deliveredAt?: number };
 
 export function installAnswer(pi: ExtensionAPI): void {
+  repairToolArgs(pi);
   /**
    * Per prompt: whether the run was already reminded once (a second reminder
    * would only loop) and how many replies were rejected so far.
