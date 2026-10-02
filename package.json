@@ -1,10 +1,12 @@
 {
   "name": "@prjct.app/pi-answer",
   "version": "0.1.0",
-  "private": true,
-  "description": "Pi extension: the agent ends every turn with a typed answer (change, answer, diagnosis, needs_input, blocked) instead of prose. Code stays in files; explanations only when asked.",
+    "description": "Pi extension: the agent ends every turn with a typed answer (change, answer, diagnosis, needs_input, blocked) instead of prose. Code stays in files; explanations only when asked.",
   "type": "module",
   "license": "MIT",
+  "repository": {"type": "git", "url": "git+https://github.com/prjct-app/pi-answer.git"},
+  "bugs": {"url": "https://github.com/prjct-app/pi-answer/issues"},
+  "homepage": "https://github.com/prjct-app/pi-answer#readme",
   "keywords": [
     "pi-package",
     "pi",
@@ -38,7 +40,7 @@
     "typebox": "*"
   },
   "dependencies": {
-    "@prjct.app/pi-tui-kit": "file:../pi-tui-kit"
+    "@prjct.app/pi-tui-kit": "^0.3.0"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "0.85.1",
