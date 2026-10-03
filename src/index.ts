@@ -1,6 +1,7 @@
+import { randomUUID } from 'node:crypto';
 import { getMarkdownTheme, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui';
-import { SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, salvageReply, type Reply, repairToolArgs } from '@prjct.app/pi-tui-kit';
+import { REPLY_KINDS, SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, salvageReply, type Reply, repairToolArgs } from '@prjct.app/pi-tui-kit';
 
 export const ANSWER_TOOL = 'answer';
 export const NUDGE_TYPE = 'pi-answer-nudge';
@@ -52,6 +53,24 @@ const proseOf = (reply: Reply): string | undefined => {
 
 /** Prose the model wrote is Markdown and renders like any assistant text. */
 const markdown = (text: string) => new Markdown(text.trim(), 1, 0, getMarkdownTheme());
+
+/**
+ * A reply the model wrote as text instead of calling the tool: the whole text
+ * is one JSON object (fenced or not) whose kind, after repair, is a reply kind.
+ * MiniMax-M3 answers the reminder this way, and the raw JSON was all the person
+ * saw. Anything else (prose, JSON with words around it) is left alone.
+ */
+export function replyInText(text: string): Record<string, unknown> | undefined {
+  const body = text.trim().replace(/^```(?:json)?[ \t]*\n?/iu, '').replace(/\n?```$/u, '').trim();
+  if (!body.startsWith('{') || !body.endsWith('}')) return undefined;
+  let parsed: unknown;
+  try { parsed = JSON.parse(body); } catch { return undefined; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
+  const repaired = repairReply(parsed) as { kind?: unknown } | undefined;
+  return typeof repaired?.kind === 'string' && (REPLY_KINDS as readonly string[]).includes(repaired.kind) ? parsed as Record<string, unknown> : undefined;
+}
+
+type Content = { type: string; text?: string };
 
 /** What a delivered reply keeps: the reply itself and when it reached the person. */
 type Delivered = Reply & { deliveredAt?: number };
@@ -130,6 +149,22 @@ export function installAnswer(pi: ExtensionAPI): void {
       return container;
     },
   } as Parameters<ExtensionAPI['registerTool']>[0]);
+
+  /**
+   * Runs before the message is drawn, saved, or searched for tool calls, so a
+   * reply written as text becomes the `answer` call it was meant to be: it
+   * renders like any reply, and the history stays a valid call and result.
+   */
+  pi.on('message_end', async event => {
+    const message = event.message as { role: string; stopReason?: string; content?: Content[] };
+    if (message.role !== 'assistant' || message.stopReason !== 'stop' || !pi.getActiveTools().includes(ANSWER_TOOL)) return undefined;
+    const content = message.content ?? [];
+    if (content.some(part => part.type === 'toolCall')) return undefined;
+    const reply = replyInText(content.filter(part => part.type === 'text').map(part => part.text ?? '').join(''));
+    if (!reply) return undefined;
+    const call = { type: 'toolCall', id: `call_${randomUUID().replace(/-/gu, '').slice(0, 24)}`, name: ANSWER_TOOL, arguments: reply };
+    return { message: { ...message, stopReason: 'toolUse', content: [...content.filter(part => part.type !== 'text'), call] } as typeof event.message };
+  });
 
   pi.on('before_agent_start', async event => {
     // A reminder turn carries no prompt of its own; the person's request still rules.

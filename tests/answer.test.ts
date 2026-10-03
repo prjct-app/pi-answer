@@ -111,3 +111,47 @@ test('what repair cannot fix is named per kind, then salvaged so the turn always
   await prompt('otra cosa');
   assert.throws(() => tool.prepareArguments(broken), /Not delivered/);
 });
+
+test('a reply written as text instead of a tool call becomes the answer call', async () => {
+  const handlers = new Map<string, Handler>();
+  const pi = {
+    registerTool: () => {},
+    on: (event: string, handler: Handler) => { handlers.set(event, handler); },
+    sendMessage: () => {},
+    getActiveTools: () => [ANSWER_TOOL, 'read'],
+  } as unknown as ExtensionAPI;
+  installAnswer(pi);
+  const end = (message: any) => handlers.get('message_end')!({ type: 'message_end', message });
+  // MiniMax-M3, 2026-10-03: the reminder answered with the tool's JSON as plain text.
+  const json = '{"kind":"answer","explanation":"Methodology edited: rule 7 split into 4 sub-states.","files":["docs/methodology.md"]}';
+  const thinking = { type: 'thinking', thinking: 'done', thinkingSignature: 'sig' };
+  const replaced = await end({ role: 'assistant', stopReason: 'stop', content: [thinking, { type: 'text', text: json }] });
+  assert.equal(replaced.message.stopReason, 'toolUse');
+  assert.deepEqual(replaced.message.content[0], thinking, 'thinking stays, with its signature');
+  const call = replaced.message.content[1];
+  assert.equal(call.type, 'toolCall');
+  assert.equal(call.name, ANSWER_TOOL);
+  assert.match(call.id, /^call_[0-9a-f]{24}$/);
+  assert.deepEqual(call.arguments, JSON.parse(json));
+  assert.equal(replaced.message.content.length, 2, 'the raw JSON text is gone');
+  // Fenced JSON too.
+  const fenced = await end({ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: '```json\n{"kind":"blocked","reason":"no access","tried":[]}\n```' }] });
+  assert.equal(fenced.message.content[0].name, ANSWER_TOOL);
+  // Left alone: prose, JSON with words around it, JSON that is not a reply, a message that already calls tools.
+  for (const text of ['Listo, edité docs/methodology.md.', 'Here: {"kind":"answer","answer":"x","refs":[]}', '{"name":"x","value":1}', '{not json}']) {
+    assert.equal(await end({ role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text }] }), undefined, text);
+  }
+  assert.equal(await end({ role: 'assistant', stopReason: 'toolUse', content: [{ type: 'text', text: json }, { type: 'toolCall', id: 'c', name: 'read', arguments: {} }] }), undefined);
+  assert.equal(await end({ role: 'user', content: [{ type: 'text', text: json }] }), undefined);
+});
+
+test('a reply written as text is left alone where the answer tool is not active', async () => {
+  const handlers = new Map<string, Handler>();
+  installAnswer({
+    registerTool: () => {}, sendMessage: () => {},
+    on: (event: string, handler: Handler) => { handlers.set(event, handler); },
+    getActiveTools: () => ['read', 'team_reply'],
+  } as unknown as ExtensionAPI);
+  const json = '{"kind":"answer","answer":"x","refs":[]}';
+  assert.equal(await handlers.get('message_end')!({ message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: json }] } }), undefined);
+});
