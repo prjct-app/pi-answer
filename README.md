@@ -18,8 +18,9 @@ pi install npm:@prjct.app/pi-answer
 
 The extension registers an `answer` tool for structured results. Normal prose
 also finishes a turn, without a reminder or another model request. Invalid
-tool arguments are checked and repaired before rendering. A valid reply JSON
-written as assistant text is converted to a tool call with a matching result.
+tool arguments are validated without silently dropping evidence. JSON-looking
+assistant prose remains unchanged. Only explicitly required mode may convert a
+valid structured reply written as text into a tool call.
 
 Set `PI_ANSWER_REQUIRED=1` before starting Pi to require the tool for every reply.
 In that mode, a turn without the tool gets at most one reminder.

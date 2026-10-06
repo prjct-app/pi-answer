@@ -93,29 +93,23 @@ test('no reminder after a delivered answer, an abort, or where the tool is not a
   assert.equal(expert.sent.length, 0);
 });
 
-test('near-miss replies from any model are repaired before validation', async () => {
+test('valid JSON wrappers are accepted without changing the answer', async () => {
   const { tool, prompt } = harness();
   await prompt('qué comando muestra el branch');
-  const answer = '`git branch` marca el branch actual con `*`.';
-  assert.deepEqual(tool.prepareArguments({ kind: 'answer', answer, refs: '' }), { kind: 'answer', answer, refs: [] });
-  assert.deepEqual(tool.prepareArguments({ kind: 'answer', answer: { answer, refs: [''] } }), { kind: 'answer', answer, refs: [] });
-  const result = await tool.execute('1', tool.prepareArguments(JSON.stringify({ kind: 'answer', answer, refs: [{ path: '' }] })));
-  assert.equal(result.terminate, true);
+  const reply = { kind: 'answer', answer: '`git branch` marca el branch actual con `*`.', refs: [] };
+  assert.deepEqual(tool.prepareArguments(JSON.stringify(reply)), reply);
+  assert.equal((await tool.execute('1', tool.prepareArguments(reply))).terminate, true);
 });
 
 test('what repair cannot fix is named per kind, then salvaged so the turn always ends', async () => {
   const { tool, prompt } = harness();
   await prompt('agrega retry');
-  // With prose, a change with bare paths is delivered at once as an answer.
-  const described = tool.prepareArguments({ kind: 'change', files: ['src/retry.ts'], checks: [], pending: [], explanation: 'Agregué retry con backoff.' });
-  assert.deepEqual(described, { kind: 'answer', answer: 'Agregué retry con backoff.', refs: [{ path: 'src/retry.ts' }] });
-  // Without any, it is sent back, then salvaged.
   const broken = { kind: 'change', files: ['src/retry.ts'], checks: [], pending: [] };
   assert.throws(() => tool.prepareArguments(broken), /Not delivered.*\/files\/0/);
   assert.throws(() => tool.prepareArguments(broken), /Not delivered/);
   const salvaged = tool.prepareArguments(broken);
   assert.equal(salvaged.kind, 'answer');
-  assert.match(salvaged.answer, /src\/retry\.ts/);
+  assert.deepEqual(JSON.parse(salvaged.answer), broken);
   assert.equal((await tool.execute('1', salvaged)).terminate, true);
   // A new prompt starts with a clean count.
   await prompt('otra cosa');
@@ -130,10 +124,10 @@ test('a reply written as text instead of a tool call becomes the answer call', a
     sendMessage: () => {},
     getActiveTools: () => [ANSWER_TOOL, 'read'],
   } as unknown as ExtensionAPI;
-  installAnswer(pi);
+  installAnswer(pi, { required: true });
   const end = (message: any) => handlers.get('message_end')!({ type: 'message_end', message });
   // MiniMax-M3, 2026-10-03: the reminder answered with the tool's JSON as plain text.
-  const json = '{"kind":"answer","explanation":"Methodology edited: rule 7 split into 4 sub-states.","files":["docs/methodology.md"]}';
+  const json = '{"kind":"answer","answer":"Methodology edited: rule 7 split into 4 sub-states.","refs":[{"path":"docs/methodology.md"}]}';
   const thinking = { type: 'thinking', thinking: 'done', thinkingSignature: 'sig' };
   const replaced = await end({ role: 'assistant', stopReason: 'stop', content: [thinking, { type: 'text', text: json }] });
   assert.equal(replaced.message.stopReason, 'toolUse');
@@ -164,4 +158,14 @@ test('a reply written as text is left alone where the answer tool is not active'
   } as unknown as ExtensionAPI);
   const json = '{"kind":"answer","answer":"x","refs":[]}';
   assert.equal(await handlers.get('message_end')!({ message: { role: 'assistant', stopReason: 'stop', content: [{ type: 'text', text: json }] } }), undefined);
+});
+
+test('normal mode preserves JSON-looking prose even when the answer tool is active', async () => {
+  const handlers = new Map<string, Handler>();
+  installAnswer({ registerTool() {}, sendMessage() {},
+    on: (name: string, handler: Handler) => handlers.set(name, handler),
+    getActiveTools: () => [ANSWER_TOOL],
+  } as unknown as ExtensionAPI);
+  const message = { role: 'assistant', stopReason: 'stop', content: [{type: 'text', text: '{"kind":"answer","answer":"literal example","refs":[]}'}] };
+  assert.equal(await handlers.get('message_end')!({message}), undefined);
 });
