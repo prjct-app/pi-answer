@@ -14,10 +14,15 @@ export const NUDGE_TYPE = 'pi-answer-nudge';
  * prefix: 46 of 59 system-prompt cache breaks measured on 2026-09-27/28.
  */
 export const SYSTEM_POLICY = [
-  `End every turn by calling \`${ANSWER_TOOL}\` exactly once, alone in its tool batch. It is the only reply the person reads.`,
+  `Use \`${ANSWER_TOOL}\` when a structured result helps the person. Plain prose is also a complete reply; do not call the tool just to repeat it.`,
   'Pick the kind that matches what you did: change (you edited files), answer (you were asked something), diagnosis (you investigated a problem), needs_input (you need a decision), blocked (you cannot continue).',
   'Code goes into files with write/edit; in the reply, refer to it by path and line.',
   'Put the result in the fields. Use `explanation` for the why when the person asked for it; do not narrate your process or restate the request.',
+];
+
+export const REQUIRED_POLICY = [
+  `End every turn by calling \`${ANSWER_TOOL}\` exactly once, alone in its tool batch. It is the only reply the person reads.`,
+  ...SYSTEM_POLICY.slice(1),
   'Write no prose outside the tool.',
 ];
 
@@ -67,7 +72,8 @@ export function replyInText(text: string): Record<string, unknown> | undefined {
   try { parsed = JSON.parse(body); } catch { return undefined; }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
   const repaired = repairReply(parsed) as { kind?: unknown } | undefined;
-  return typeof repaired?.kind === 'string' && (REPLY_KINDS as readonly string[]).includes(repaired.kind) ? parsed as Record<string, unknown> : undefined;
+  return typeof repaired?.kind === 'string' && (REPLY_KINDS as readonly string[]).includes(repaired.kind)
+    && !replyProblems(repaired).length ? parsed as Record<string, unknown> : undefined;
 }
 
 type Content = { type: string; text?: string };
@@ -75,7 +81,10 @@ type Content = { type: string; text?: string };
 /** What a delivered reply keeps: the reply itself and when it reached the person. */
 type Delivered = Reply & { deliveredAt?: number };
 
-export function installAnswer(pi: ExtensionAPI): void {
+export type AnswerOptions = Readonly<{ required?: boolean }>;
+
+export function installAnswer(pi: ExtensionAPI, options: AnswerOptions = {}): void {
+  const required = options.required ?? process.env.PI_ANSWER_REQUIRED === '1';
   repairToolArgs(pi);
   /**
    * Per prompt: whether the run was already reminded once (a second reminder
@@ -86,13 +95,13 @@ export function installAnswer(pi: ExtensionAPI): void {
   pi.registerTool({
     name: ANSWER_TOOL,
     label: 'Answer',
-    description: 'Your reply to the person, as data. Call it once, alone, to end the turn. '
+    description: 'An optional structured reply to the person. Call it once, alone, to end the turn. '
       + 'Kinds: change (files you touched, what changed in each, checks you ran, what is pending), '
       + 'answer (the direct answer and file references), diagnosis (cause, evidence by file and line, fix status), '
       + 'needs_input (one question and its options), blocked (why, and what you tried). '
       + 'Code belongs in files; refer to it by path. explanation holds the why when the person asked for it.',
-    promptSnippet: 'Reply to the person with typed data and end the turn',
-    promptGuidelines: SYSTEM_POLICY,
+    promptSnippet: 'Deliver a structured result when useful and end the turn',
+    promptGuidelines: required ? REQUIRED_POLICY : SYSTEM_POLICY,
     parameters: replySchema(),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     /**
@@ -178,7 +187,7 @@ export function installAnswer(pi: ExtensionAPI): void {
    * through its own tool is never nudged toward this one.
    */
   pi.on('agent_end', async event => {
-    if (slot.nudged || !pi.getActiveTools().includes(ANSWER_TOOL)) return;
+    if (!required || slot.nudged || !pi.getActiveTools().includes(ANSWER_TOOL)) return;
     const messages = event.messages as { role: string; stopReason?: string; toolName?: string; isError?: boolean }[];
     if (messages.some(message => message.role === 'toolResult' && message.toolName === ANSWER_TOOL && !message.isError)) return;
     const last = messages.filter(message => message.role === 'assistant').at(-1);

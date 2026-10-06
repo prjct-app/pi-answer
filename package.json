@@ -1,7 +1,7 @@
 {
   "name": "@prjct.app/pi-answer",
-  "version": "0.1.2",
-  "description": "Pi extension: the agent ends every turn with a typed answer (change, answer, diagnosis, needs_input, blocked) instead of prose. Code stays in files; explanations only when asked.",
+  "version": "0.1.3",
+  "description": "Pi extension: optional structured replies for changes, answers, diagnoses, questions and blockers, with prose accepted by default.",
   "type": "module",
   "license": "MIT",
   "repository": {
