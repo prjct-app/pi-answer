@@ -165,6 +165,9 @@ export function installAnswer(pi: ExtensionAPI, options: AnswerOptions = {}): vo
    * renders like any reply, and the history stays a valid call and result.
    */
   pi.on('message_end', async event => {
+    // In normal mode, JSON-looking prose is still the model's chosen output.
+    // Only explicit structured-answer mode may recover it as a tool call.
+    if (!required) return undefined;
     const message = event.message as { role: string; stopReason?: string; content?: Content[] };
     if (message.role !== 'assistant' || message.stopReason !== 'stop' || !pi.getActiveTools().includes(ANSWER_TOOL)) return undefined;
     const content = message.content ?? [];
