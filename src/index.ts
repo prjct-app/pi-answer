@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { getMarkdownTheme, type ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { Container, Markdown, Spacer, Text } from '@earendil-works/pi-tui';
-import { REPLY_KINDS, SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, salvageReply, type Reply, repairToolArgs } from '@prjct.app/pi-tui-kit';
+import { REPLY_KINDS, SYMBOL, repairReply, replyHeadline, replyLines, replyProblems, replySchema, row, type Reply, repairToolArgs } from '@prjct.app/pi-tui-kit';
 
 export const ANSWER_TOOL = 'answer';
 export const NUDGE_TYPE = 'pi-answer-nudge';
@@ -27,12 +27,6 @@ export const REQUIRED_POLICY = [
 ];
 
 const NUDGE = `Your turn ended without \`${ANSWER_TOOL}\`. Call \`${ANSWER_TOOL}\` now with the result of this turn: no other tool, no prose.`;
-
-/**
- * Replies rejected per prompt before the next one is salvaged as a plain
- * answer: a model that cannot meet the schema still ends its turn.
- */
-const MAX_REJECTIONS = 2;
 
 const VERB = 'DONE';
 const VERBS = { change: 'CHANGE', answer: 'ANSWER', diagnosis: 'DIAGNOSE', needs_input: 'ASK', blocked: 'BLOCKED' } as const;
@@ -86,11 +80,16 @@ export type AnswerOptions = Readonly<{ required?: boolean }>;
 export function installAnswer(pi: ExtensionAPI, options: AnswerOptions = {}): void {
   const required = options.required ?? process.env.PI_ANSWER_REQUIRED === '1';
   repairToolArgs(pi);
-  /**
-   * Per prompt: whether the run was already reminded once (a second reminder
-   * would only loop) and how many replies were rejected so far.
-   */
-  const slot = { nudged: false, rejections: 0 };
+  // Explicit required mode may remind once. Invalid data never becomes a
+  // delivered reply just because the model has already tried several times.
+  const slot = { nudged: false };
+  function validateReply(input: unknown): asserts input is Reply {
+    const problems = replyProblems(input);
+    if (problems.length) {
+      const recovery = required ? 'Correct the reply fields.' : 'Correct the reply fields, or finish in normal prose without calling answer.';
+      throw new Error(`Not delivered. ${recovery} ${problems.join('; ')}`);
+    }
+  }
 
   pi.registerTool({
     name: ANSWER_TOOL,
@@ -112,25 +111,18 @@ export function installAnswer(pi: ExtensionAPI, options: AnswerOptions = {}): vo
      */
     prepareArguments(raw: unknown) {
       const reply = repairReply(raw);
-      const problems = replyProblems(reply);
-      if (!problems.length) return reply;
-      slot.rejections += 1;
-      if (slot.rejections > MAX_REJECTIONS) return salvageReply(raw);
-      throw new Error(`Not delivered. Fix and call ${ANSWER_TOOL} again: ${problems.join('; ')}`);
+      validateReply(reply);
+      return reply;
     },
     // The reply reads like a message, not a tool box: no shell, no pad lines.
     renderShell: 'self',
     async execute(_id: string, input: unknown) {
       // Validated here so the model fixes its own reply while it still has the
       // context; a thrown error goes back to it as the tool result.
-      const problems = replyProblems(input);
-      if (problems.length) {
-        throw new Error(`Not delivered. Fix and call ${ANSWER_TOOL} again: ${problems.join('; ')}`);
-      }
-      slot.rejections = 0;
+      validateReply(input);
       return {
         content: [{ type: 'text' as const, text: 'Delivered.' }],
-        details: { ...(input as Reply), deliveredAt: Date.now() } satisfies Delivered,
+        details: { ...input, deliveredAt: Date.now() } satisfies Delivered,
         terminate: true,
       };
     },
@@ -180,7 +172,7 @@ export function installAnswer(pi: ExtensionAPI, options: AnswerOptions = {}): vo
 
   pi.on('before_agent_start', async event => {
     // A reminder turn carries no prompt of its own; the person's request still rules.
-    if (event.prompt.trim()) Object.assign(slot, { nudged: false, rejections: 0 });
+    if (event.prompt.trim()) slot.nudged = false;
     return undefined;
   });
 

@@ -1,6 +1,6 @@
 {
   "name": "@prjct.app/pi-answer",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Pi extension: optional structured replies for changes, answers, diagnoses, questions and blockers, with prose accepted by default.",
   "type": "module",
   "license": "MIT",

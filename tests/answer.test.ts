@@ -101,19 +101,20 @@ test('valid JSON wrappers are accepted without changing the answer', async () =>
   assert.equal((await tool.execute('1', tool.prepareArguments(reply))).terminate, true);
 });
 
-test('what repair cannot fix is named per kind, then salvaged so the turn always ends', async () => {
-  const { tool, prompt } = harness();
+test('repeated malformed replies never deliver raw JSON or terminate the turn', async () => {
+  const { tool, prompt, end, sent } = harness();
   await prompt('agrega retry');
-  const broken = { kind: 'change', files: ['src/retry.ts'], checks: [], pending: [] };
-  assert.throws(() => tool.prepareArguments(broken), /Not delivered.*\/files\/0/);
-  assert.throws(() => tool.prepareArguments(broken), /Not delivered/);
-  const salvaged = tool.prepareArguments(broken);
-  assert.equal(salvaged.kind, 'answer');
-  assert.deepEqual(JSON.parse(salvaged.answer), broken);
-  assert.equal((await tool.execute('1', salvaged)).terminate, true);
-  // A new prompt starts with a clean count.
-  await prompt('otra cosa');
-  assert.throws(() => tool.prepareArguments(broken), /Not delivered/);
+  for (const broken of [{ type: 'change' }, { kind: 'change', files: ['src/retry.ts'], checks: [], pending: [] }]) {
+    const original = structuredClone(broken);
+    for (let attempt = 0; attempt < 5; attempt++) {
+      assert.throws(() => tool.prepareArguments(broken), /Not delivered.*finish in normal prose/);
+      await assert.rejects(tool.execute(String(attempt), broken), /Not delivered/);
+    }
+    assert.deepEqual(broken, original);
+  }
+  await end([{ role: 'assistant', stopReason: 'stop', content: [{type:'text',text:'Faltan datos; sigo revisando el fallo.'}] }]);
+  assert.equal(sent.length, 0, 'recovery prose must not trigger another generation');
+  assert.equal((await tool.execute('fixed', tool.prepareArguments(change))).terminate, true);
 });
 
 test('a reply written as text instead of a tool call becomes the answer call', async () => {
