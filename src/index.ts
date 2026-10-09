@@ -7,24 +7,21 @@ export const ANSWER_TOOL = 'answer';
 export const NUDGE_TYPE = 'pi-answer-nudge';
 
 /**
- * The tool's prompt guidelines: Pi renders them into the system prompt on every
- * request while the tool is active. Appending them from before_agent_start
- * flipped the system prompt on automated turns (follow-ups, job reports, team
- * messages), which skip that hook, and each flip threw away the whole cached
- * prefix: 46 of 59 system-prompt cache breaks measured on 2026-09-27/28.
+ * The whole policy lives in the tool description. promptSnippet and
+ * promptGuidelines would put this extension in the system prompt of every
+ * request, even when the model never calls the tool.
  */
-export const SYSTEM_POLICY = [
-  `Use \`${ANSWER_TOOL}\` when a structured result helps the person. Plain prose is also a complete reply; do not call the tool just to repeat it.`,
-  'Pick the kind that matches what you did: change (you edited files), answer (you were asked something), diagnosis (you investigated a problem), needs_input (you need a decision), blocked (you cannot continue).',
-  'Code goes into files with write/edit; in the reply, refer to it by path and line.',
-  'Put the result in the fields. Use `explanation` for the why when the person asked for it; do not narrate your process or restate the request.',
-];
+const KINDS = 'Pick the kind that matches what you did: change (files you touched, what changed in each, checks you ran, what is pending), '
+  + 'answer (the direct answer and file references), diagnosis (cause, evidence by file and line, fix status), '
+  + 'needs_input (one question and its options), blocked (why, and what you tried). '
+  + 'Code belongs in files written with write/edit; refer to it by path and line. '
+  + 'Put the result in the fields; explanation holds the why when the person asked for it. Do not narrate your process or restate the request.';
 
-export const REQUIRED_POLICY = [
-  `End every turn by calling \`${ANSWER_TOOL}\` exactly once, alone in its tool batch. It is the only reply the person reads.`,
-  ...SYSTEM_POLICY.slice(1),
-  'Write no prose outside the tool.',
-];
+export const OPTIONAL_DESCRIPTION = 'An optional structured reply to the person, for when a structured result helps. '
+  + 'Plain prose is also a complete reply; do not call this just to repeat it. Call it once, alone, to end the turn. ' + KINDS;
+
+export const REQUIRED_DESCRIPTION = 'The only reply the person reads: end every turn by calling it exactly once, alone in its tool batch, '
+  + 'and write no prose outside it. ' + KINDS;
 
 const NUDGE = `Your turn ended without \`${ANSWER_TOOL}\`. Call \`${ANSWER_TOOL}\` now with the result of this turn: no other tool, no prose.`;
 
@@ -94,13 +91,7 @@ export function installAnswer(pi: ExtensionAPI, options: AnswerOptions = {}): vo
   pi.registerTool({
     name: ANSWER_TOOL,
     label: 'Answer',
-    description: 'An optional structured reply to the person. Call it once, alone, to end the turn. '
-      + 'Kinds: change (files you touched, what changed in each, checks you ran, what is pending), '
-      + 'answer (the direct answer and file references), diagnosis (cause, evidence by file and line, fix status), '
-      + 'needs_input (one question and its options), blocked (why, and what you tried). '
-      + 'Code belongs in files; refer to it by path. explanation holds the why when the person asked for it.',
-    promptSnippet: 'Deliver a structured result when useful and end the turn',
-    promptGuidelines: required ? REQUIRED_POLICY : SYSTEM_POLICY,
+    description: required ? REQUIRED_DESCRIPTION : OPTIONAL_DESCRIPTION,
     parameters: replySchema(),
     constrainedSampling: { type: 'json_schema', strict: 'prefer' },
     /**
