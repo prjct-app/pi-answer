@@ -56,11 +56,14 @@ const markdown = (text: string) => new Markdown(text.trim(), 1, 0, getMarkdownTh
  * MiniMax-M3 answers the reminder this way, and the raw JSON was all the person
  * saw. Anything else (prose, JSON with words around it) is left alone.
  */
+function parseOrUndefined(text: string): unknown {
+  try { return JSON.parse(text); } catch { return undefined; }
+}
+
 export function replyInText(text: string): Record<string, unknown> | undefined {
   const body = text.trim().replace(/^```(?:json)?[ \t]*\n?/iu, '').replace(/\n?```$/u, '').trim();
   if (!body.startsWith('{') || !body.endsWith('}')) return undefined;
-  let parsed: unknown;
-  try { parsed = JSON.parse(body); } catch { return undefined; }
+  const parsed = parseOrUndefined(body);
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return undefined;
   const repaired = repairReply(parsed) as { kind?: unknown } | undefined;
   return typeof repaired?.kind === 'string' && (REPLY_KINDS as readonly string[]).includes(repaired.kind)

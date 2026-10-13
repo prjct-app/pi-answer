@@ -108,7 +108,7 @@ test('repeated malformed replies never deliver raw JSON or terminate the turn', 
   await prompt('agrega retry');
   for (const broken of [{ type: 'change' }, { kind: 'change', files: ['src/retry.ts'], checks: [], pending: [] }]) {
     const original = structuredClone(broken);
-    for (let attempt = 0; attempt < 5; attempt++) {
+    for (const attempt of Array.from({ length: 5 }, (_, i) => i)) {
       assert.throws(() => tool.prepareArguments(broken), /Not delivered.*finish in normal prose/);
       await assert.rejects(tool.execute(String(attempt), broken), /Not delivered/);
     }

@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.7 — 2026-10-12
+
+- Code: no `let` bindings; mutable state lives in one named object. Behaviour is unchanged.
+- Tests run with temporary Pi and prjct folders, so they never touch your real configuration.
+
 ## 0.1.6 (2026-10-09)
 
 - The answer policy lives in the tool description. The tool no longer adds a snippet or guidelines to the system prompt of every request.
